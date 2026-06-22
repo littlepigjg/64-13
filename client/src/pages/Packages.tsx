@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../AuthContext';
-import type { PackageInfo, RegistryType, PackageSource } from '../types';
+import type { PackageInfo, RegistryType, PackageSource, PackageListBreakdown } from '../types';
 import { formatSize, formatRelativeTime } from '../utils';
 import {
   PackageIcon,
@@ -30,6 +30,7 @@ export default function Packages() {
   const { user, authEnabled, isAdmin, canDeletePackage } = useAuth();
   const [packages, setPackages] = useState<PackageInfo[]>([]);
   const [total, setTotal] = useState(0);
+  const [breakdown, setBreakdown] = useState<PackageListBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState(searchParams.get('search') || '');
@@ -62,6 +63,7 @@ export default function Packages() {
       });
       setPackages(result.packages);
       setTotal(result.total);
+      setBreakdown(result.breakdown);
     } finally {
       setLoading(false);
     }
@@ -96,12 +98,18 @@ export default function Packages() {
 
   const getHeaderSubtitle = () => {
     if (!authEnabled || isAdmin()) {
+      if (breakdown) {
+        return `共 ${breakdown.total} 个包 · NPM ${breakdown.npm} · PyPI ${breakdown.pypi} · 私有 ${breakdown.privateOwned + breakdown.privateOthers} · 代理缓存 ${breakdown.cache}`;
+      }
       return `管理本地缓存的 NPM 和 PyPI 包，共 ${total} 个`;
     }
-    const myPrivateCount = packages.filter(
-      (p) => p.source === 'private' && p.ownerId === user?.id
-    ).length;
-    return `共 ${total} 个包 · 我上传的私有包 ${myPrivateCount} 个 · 其余为团队共享的代理缓存`;
+    const myPrivateCount = breakdown?.privateOwned ?? 0;
+    const cacheCount = breakdown?.cache ?? 0;
+    const othersPrivate = breakdown?.privateOthers ?? 0;
+    if (search || registry || source) {
+      return `当前筛选结果：${total} 个包 · 我上传的私有包 ${myPrivateCount} 个 · 他人私有 ${othersPrivate} · 代理缓存 ${cacheCount} 个`;
+    }
+    return `共 ${total} 个包 · 我上传的私有包 ${myPrivateCount} 个 · 团队共享代理缓存 ${cacheCount} 个${othersPrivate ? ` · 他人私有 ${othersPrivate} 个` : ''}`;
   };
 
   return (

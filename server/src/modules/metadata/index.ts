@@ -489,7 +489,7 @@ export class MetadataIndex {
     sortBy?: 'name' | 'updatedAt' | 'size' | 'downloads';
     sortOrder?: 'asc' | 'desc';
     ownerId?: number;
-  } = {}): { packages: PackageInfo[]; total: number } {
+  } = {}): { packages: PackageInfo[]; total: number; breakdown: import('../../types').PackageListBreakdown } {
     let list = [...this.db.packages];
 
     if (options.registry) list = list.filter((p) => p.registry === options.registry);
@@ -503,6 +503,31 @@ export class MetadataIndex {
     }
 
     const total = list.length;
+
+    const breakdown: import('../../types').PackageListBreakdown = {
+      total,
+      privateOwned: 0,
+      privateOthers: 0,
+      cache: 0,
+      npm: 0,
+      pypi: 0,
+    };
+    const userId = options.ownerId;
+    for (const pkg of list) {
+      if (pkg.registry === 'npm') breakdown.npm++;
+      if (pkg.registry === 'pypi') breakdown.pypi++;
+      if (pkg.source === 'cache') breakdown.cache++;
+      if (pkg.source === 'private') {
+        if (userId !== undefined && pkg.ownerId === userId) {
+          breakdown.privateOwned++;
+        } else if (userId === undefined) {
+          if (pkg.ownerId !== undefined) breakdown.privateOwned++;
+          else breakdown.privateOthers++;
+        } else {
+          breakdown.privateOthers++;
+        }
+      }
+    }
 
     const sortField = options.sortBy === 'size' ? 'totalSize' :
       options.sortBy === 'downloads' ? 'downloadCount' :
@@ -559,7 +584,7 @@ export class MetadataIndex {
       })),
     }));
 
-    return { packages, total };
+    return { packages, total, breakdown };
   }
 
   getVersionFilePath(packageName: string, registry: RegistryType, version: string): string | null {

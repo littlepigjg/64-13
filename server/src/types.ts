@@ -84,6 +84,21 @@ export interface CacheStats {
   usagePercent: number;
 }
 
+export interface PackageListBreakdown {
+  total: number;
+  privateOwned: number;
+  privateOthers: number;
+  cache: number;
+  npm: number;
+  pypi: number;
+}
+
+export interface PackageListResponse {
+  packages: PackageInfo[];
+  total: number;
+  breakdown: PackageListBreakdown;
+}
+
 export interface StorageTrend {
   date: string;
   size: number;

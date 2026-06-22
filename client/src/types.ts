@@ -72,9 +72,19 @@ export interface PackageInfo {
   ownerName?: string;
 }
 
+export interface PackageListBreakdown {
+  total: number;
+  privateOwned: number;
+  privateOthers: number;
+  cache: number;
+  npm: number;
+  pypi: number;
+}
+
 export interface PackageListResponse {
   packages: PackageInfo[];
   total: number;
+  breakdown: PackageListBreakdown;
 }
 
 export interface CacheStats {
