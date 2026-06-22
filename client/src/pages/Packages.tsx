@@ -16,6 +16,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { api } from '../api';
+import { useAuth } from '../AuthContext';
 import type { PackageInfo, RegistryType, PackageSource } from '../types';
 import { formatSize, formatRelativeTime } from '../utils';
 
@@ -24,6 +25,7 @@ type SortBy = 'name' | 'updatedAt' | 'size' | 'downloads';
 export default function Packages() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { canDeletePackage } = useAuth();
   const [packages, setPackages] = useState<PackageInfo[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -265,13 +267,15 @@ export default function Packages() {
                     </td>
                     <td className="text-sm text-slate-500">{formatRelativeTime(pkg.updatedAt)}</td>
                     <td className="text-right">
-                      <button
-                        className="btn btn-ghost p-2 text-slate-400 hover:text-red-600 hover:bg-red-50"
-                        onClick={(e) => handleDelete(pkg, e)}
-                        title="删除"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      {canDeletePackage(pkg) && (
+                        <button
+                          className="btn btn-ghost p-2 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                          onClick={(e) => handleDelete(pkg, e)}
+                          title="删除"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

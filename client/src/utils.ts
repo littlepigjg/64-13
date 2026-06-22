@@ -32,3 +32,7 @@ export function formatRelativeTime(ts: number): string {
 export function formatNumber(n: number): string {
   return n.toLocaleString('zh-CN');
 }
+
+export function formatDateTime(ts: number): string {
+  return formatDate(ts);
+}

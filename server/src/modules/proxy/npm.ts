@@ -5,9 +5,64 @@ import { getCacheStorage } from '../cache';
 import { parseNpmPackageName, sanitizePath } from '../../utils';
 import { isPrivateScope } from '../private-pkg';
 import { makeRequest } from './utils';
-import type { PackageVersion } from '../../types';
+import { getAuditLogger } from '../audit';
+import type { PackageVersion, AuthenticatedRequest } from '../../types';
 
 const npmRouter = Router();
+
+function extractTokenFromNpmReq(req: Request): string | null {
+  const authHeader = req.headers['authorization'];
+  if (authHeader) {
+    if (authHeader.startsWith('Bearer ')) return authHeader.slice(7);
+    if (authHeader.startsWith('Basic ')) {
+      try {
+        const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf-8');
+        const [, tokenPart] = decoded.split(':');
+        if (tokenPart) return tokenPart;
+      } catch {
+        // ignore decode error
+      }
+    }
+  }
+  if (typeof req.headers['x-auth-token'] === 'string') return req.headers['x-auth-token'];
+  return null;
+}
+
+function requireNpmAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  if (!config.auth.requireAuth) {
+    (req as AuthenticatedRequest).user = undefined;
+    next();
+    return;
+  }
+
+  const metadata = getMetadataIndex();
+  const token = extractTokenFromNpmReq(req);
+  if (!token) {
+    res.status(401).json({ error: 'Authentication required', code: 'NO_TOKEN' });
+    return;
+  }
+
+  const user = metadata.getUserByToken(token);
+  if (!user) {
+    res.status(401).json({ error: 'Invalid or expired token', code: 'INVALID_TOKEN' });
+    return;
+  }
+
+  const now = Date.now();
+  const expiryMs = config.auth.tokenExpiryDays * 24 * 60 * 60 * 1000;
+  if (now - user.lastActiveAt > expiryMs) {
+    res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
+    return;
+  }
+
+  metadata.updateUserLastActive(user.id, now);
+  (req as AuthenticatedRequest).user = user;
+  next();
+}
 
 npmRouter.get('/', (_req: Request, res: Response) => {
   res.json({
@@ -92,19 +147,19 @@ npmRouter.get('/:package', async (req: Request, res: Response, next: NextFunctio
   }
 });
 
-npmRouter.put('/@:scope/:name', async (req: Request, res: Response, next: NextFunction) => {
+npmRouter.put('/@:scope/:name', requireNpmAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const packageName = `@${req.params.scope as string}/${req.params.name as string}`;
-    await handleNpmPublish(packageName, req, res);
+    await handleNpmPublish(packageName, req as AuthenticatedRequest, res);
   } catch (err) {
     next(err);
   }
 });
 
-npmRouter.put('/:package', async (req: Request, res: Response, next: NextFunction) => {
+npmRouter.put('/:package', requireNpmAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const packageName = req.params.package as string;
-    await handleNpmPublish(packageName, req, res);
+    await handleNpmPublish(packageName, req as AuthenticatedRequest, res);
   } catch (err) {
     next(err);
   }
@@ -326,10 +381,14 @@ function handlePrivateNpmTarball(packageName: string, filename: string, res: Res
   cache.readStream(filePath).pipe(res);
 }
 
-async function handlePublishNpmPackage(packageName: string, req: Request, res: Response): Promise<void> {
+async function handlePublishNpmPackage(packageName: string, req: AuthenticatedRequest, res: Response): Promise<void> {
+  const audit = getAuditLogger();
   const metadata = getMetadataIndex();
   const cache = getCacheStorage();
   const { scope, name: rawName } = parseNpmPackageName(packageName);
+  const user = req.user;
+  const ip = req.ip;
+  const userAgent = req.headers['user-agent'];
 
   if (!scope) {
     res.status(400).json({ error: 'Private package must have a scope' });
@@ -367,7 +426,23 @@ async function handlePublishNpmPackage(packageName: string, req: Request, res: R
   const filePath = cache.getNpmPrivatePath(scope, rawName, version, filename);
   cache.writeFile(filePath, tarballBuffer);
 
-  const pkgId = metadata.getOrCreatePackage(packageName, 'npm', 'private', scope);
+  const ownerId = user?.id;
+  const ownerName = user?.username;
+  const publisherId = user?.id;
+  const publisherName = user?.username;
+
+  const existingPkg = metadata.getPackage(packageName, 'npm');
+  const isNewPackage = !existingPkg || existingPkg.source !== 'private';
+
+  const pkgId = metadata.getOrCreatePackage(
+    packageName,
+    'npm',
+    'private',
+    scope,
+    ownerId,
+    ownerName
+  );
+
   metadata.upsertPackageInfo({
     name: packageName,
     registry: 'npm',
@@ -378,7 +453,26 @@ async function handlePublishNpmPackage(packageName: string, req: Request, res: R
     source: 'private',
     scope,
   });
-  metadata.addVersion(pkgId, version, tarballBuffer.length, filePath, sha1);
+  metadata.addVersion(
+    pkgId, version, tarballBuffer.length, filePath, sha1, publisherId, publisherName
+  );
+
+  audit.log({
+    userId: user?.id || 0,
+    username: user?.username || 'unknown',
+    userRole: user?.role || 'developer',
+    action: 'package.upload',
+    target: packageName,
+    details: {
+      registry: 'npm',
+      version,
+      size: tarballBuffer.length,
+      isNew: isNewPackage,
+    },
+    success: true,
+    ip,
+    userAgent,
+  });
 
   res.json({
     ok: true,

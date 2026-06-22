@@ -1,28 +1,60 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Package,
   Settings as SettingsIcon,
   Database,
+  Users,
+  FileText,
+  ShieldAlert,
+  Shield,
+  LogOut,
+  User as UserIcon,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { useAuth } from '../AuthContext';
 import type { HealthInfo } from '../types';
 import { formatSize } from '../utils';
 
-const navItems = [
-  { path: '/dashboard', label: '统计面板', icon: LayoutDashboard },
-  { path: '/packages', label: '包列表', icon: Package },
-  { path: '/settings', label: '缓存策略', icon: SettingsIcon },
-];
-
 export default function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [health, setHealth] = useState<HealthInfo | null>(null);
+  const { user, isAdmin, logout, authEnabled } = useAuth();
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => {});
   }, [location.pathname]);
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
+  };
+
+  const getRoleBadge = () => {
+    if (!authEnabled || !user) return null;
+    if (user.role === 'admin') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700">
+          <ShieldAlert size={10} /> 管理员
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700">
+        <Shield size={10} /> 开发者
+      </span>
+    );
+  };
+
+  const navItems = [
+    { path: '/dashboard', label: '统计面板', icon: LayoutDashboard, adminOnly: false },
+    { path: '/packages', label: '包列表', icon: Package, adminOnly: false },
+    { path: '/users', label: '用户管理', icon: Users, adminOnly: true },
+    { path: '/audit-logs', label: '审计日志', icon: FileText, adminOnly: true },
+    { path: '/settings', label: '缓存策略', icon: SettingsIcon, adminOnly: true },
+  ].filter((item) => !item.adminOnly || isAdmin());
 
   return (
     <div className="flex h-screen bg-slate-50">
@@ -39,7 +71,7 @@ export default function Layout() {
           </div>
         </div>
 
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -60,6 +92,30 @@ export default function Layout() {
             );
           })}
         </nav>
+
+        {authEnabled && user && (
+          <div className="p-3 border-t border-slate-200">
+            <div className="p-3 rounded-lg bg-slate-50 space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-100 to-purple-100 flex items-center justify-center text-indigo-600 flex-shrink-0">
+                  <UserIcon size={14} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium text-sm text-slate-800 truncate">
+                    {user.username}
+                  </div>
+                  <div className="mt-0.5">{getRoleBadge()}</div>
+                </div>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium text-slate-600 hover:bg-white hover:text-red-600 transition-colors"
+              >
+                <LogOut size={13} /> 退出登录
+              </button>
+            </div>
+          </div>
+        )}
 
         {health && (
           <div className="p-4 border-t border-slate-200">

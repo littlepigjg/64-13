@@ -1,5 +1,47 @@
 export type RegistryType = 'npm' | 'pypi';
 export type PackageSource = 'cache' | 'private' | 'upstream';
+export type UserRole = 'admin' | 'developer';
+export type AuditAction =
+  | 'user.login'
+  | 'user.logout'
+  | 'user.create'
+  | 'user.delete'
+  | 'package.upload'
+  | 'package.delete'
+  | 'package.version.delete'
+  | 'package.cleanup'
+  | 'config.update'
+  | 'cache.cleanup'
+  | 'cache.snapshot';
+
+export interface User {
+  id: number;
+  username: string;
+  role: UserRole;
+  token: string;
+  createdAt: number;
+  lastActiveAt: number;
+}
+
+export interface AuditLog {
+  id: number;
+  userId: number;
+  username: string;
+  userRole: UserRole;
+  action: AuditAction;
+  target?: string;
+  details?: Record<string, unknown>;
+  ip?: string;
+  userAgent?: string;
+  timestamp: number;
+  success: boolean;
+  errorMessage?: string;
+}
+
+export interface AuditLogListResponse {
+  logs: AuditLog[];
+  total: number;
+}
 
 export interface PackageVersion {
   version: string;
@@ -8,6 +50,8 @@ export interface PackageVersion {
   sha1?: string;
   publishedAt: number;
   downloadCount: number;
+  publisherId?: number;
+  publisherName?: string;
 }
 
 export interface PackageInfo {
@@ -24,6 +68,8 @@ export interface PackageInfo {
   updatedAt: number;
   totalSize: number;
   downloadCount: number;
+  ownerId?: number;
+  ownerName?: string;
 }
 
 export interface PackageListResponse {
@@ -66,4 +112,38 @@ export interface HealthInfo {
     pypiUpstream: string;
     privateScopes: string[];
   };
+}
+
+export interface LoginRequest {
+  username: string;
+  token: string;
+}
+
+export interface LoginResponse {
+  success: boolean;
+  user: User;
+}
+
+export interface AuthInfo {
+  authEnabled: boolean;
+  user?: User;
+}
+
+export interface CreateUserRequest {
+  username: string;
+  role: UserRole;
+}
+
+export interface CreateUserResponse {
+  success: boolean;
+  user: User;
+  token: string;
+}
+
+export interface UserListResponse {
+  users: User[];
+}
+
+export interface AuditActionsResponse {
+  actions: AuditAction[];
 }

@@ -18,8 +18,14 @@ export const config = {
     autoClean: process.env.CACHE_AUTO_CLEAN !== 'false',
   },
   auth: {
-    requireAuth: process.env.REQUIRE_AUTH === 'true',
-    adminToken: process.env.ADMIN_TOKEN || 'admin-token-change-me',
+    requireAuth: process.env.REQUIRE_AUTH !== 'false',
+    defaultAdminUsername: process.env.DEFAULT_ADMIN_USERNAME || 'admin',
+    defaultAdminToken: process.env.DEFAULT_ADMIN_TOKEN || 'admin-token-change-me',
+    tokenExpiryDays: parseInt(process.env.TOKEN_EXPIRY_DAYS || '30', 10),
+  },
+  audit: {
+    retentionDays: parseInt(process.env.AUDIT_RETENTION_DAYS || '365', 10),
+    enabled: process.env.AUDIT_ENABLED !== 'false',
   },
 };
 

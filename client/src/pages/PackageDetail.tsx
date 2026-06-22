@@ -13,12 +13,14 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { api } from '../api';
+import { useAuth } from '../AuthContext';
 import type { PackageInfo, RegistryType } from '../types';
 import { formatSize, formatDate, formatRelativeTime } from '../utils';
 
 export default function PackageDetail() {
   const params = useParams<{ registry: RegistryType; name: string }>();
   const navigate = useNavigate();
+  const { canDeletePackage } = useAuth();
   const [pkg, setPkg] = useState<PackageInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,14 +131,18 @@ export default function PackageDetail() {
           </div>
 
           <div className="flex gap-2">
-            {pkg.versions.length > 3 && (
-              <button className="btn btn-secondary" onClick={handleCleanupOld}>
-                清理旧版本
-              </button>
+            {pkg && canDeletePackage(pkg) && (
+              <>
+                {pkg.versions.length > 3 && (
+                  <button className="btn btn-secondary" onClick={handleCleanupOld}>
+                    清理旧版本
+                  </button>
+                )}
+                <button className="btn btn-danger" onClick={handleDeleteAll}>
+                  <Trash2 size={16} /> 删除包
+                </button>
+              </>
             )}
-            <button className="btn btn-danger" onClick={handleDeleteAll}>
-              <Trash2 size={16} /> 删除包
-            </button>
           </div>
         </div>
 
@@ -199,16 +205,23 @@ export default function PackageDetail() {
                     <span className="inline-flex items-center gap-1">
                       <Download size={12} /> {ver.downloadCount} 次
                     </span>
+                    {ver.publisherName && (
+                      <span className="inline-flex items-center gap-1 text-indigo-500">
+                        发布者: {ver.publisherName}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
-              <button
-                className="btn btn-ghost p-2 text-slate-400 hover:text-red-600 hover:bg-red-50"
-                onClick={() => handleDeleteVersion(ver.version)}
-                title="删除此版本"
-              >
-                <Trash2 size={16} />
-              </button>
+              {canDeletePackage(pkg) && (
+                <button
+                  className="btn btn-ghost p-2 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                  onClick={() => handleDeleteVersion(ver.version)}
+                  title="删除此版本"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
             </div>
           ))}
         </div>

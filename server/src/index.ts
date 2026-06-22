@@ -4,6 +4,8 @@ import path from 'path';
 import { config } from './config';
 import { npmRouter, pypiRouter } from './modules/proxy';
 import { privatePkgRouter } from './modules/private-pkg';
+import { authRouter } from './modules/auth';
+import { auditRouter } from './modules/audit';
 import { getMetadataIndex } from './modules/metadata';
 import { getCacheStorage } from './modules/cache';
 import { ensureDir } from './utils';
@@ -19,6 +21,8 @@ app.use((req, _res, next) => {
   next();
 });
 
+app.use('/api', authRouter);
+app.use('/api', auditRouter);
 app.use('/api', privatePkgRouter);
 app.use('/npm', npmRouter);
 app.use('/pypi', pypiRouter);
@@ -81,6 +85,11 @@ setTimeout(() => {
 }, 5000);
 
 app.listen(config.port, () => {
+  const authStatus = config.auth.requireAuth ? '✓ 已启用' : '✗ 未启用';
+  const adminInfo = config.auth.requireAuth
+    ? `用户名: ${config.auth.defaultAdminUsername}, Token: ${config.auth.defaultAdminToken}`
+    : 'N/A';
+
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║     Local Registry Proxy v1.0.0                          ║
@@ -95,6 +104,9 @@ app.listen(config.port, () => {
 ║     pip install -i http://localhost:${config.port}/pypi/simple/ ...    ║
 ║                                                          ║
 ║  🔒 Private Scopes: ${config.npm.privateScopes.join(', ').padEnd(30)} ║
+║                                                          ║
+║  🔐 Auth:         ${authStatus.padEnd(42)}║
+║     ${adminInfo.padEnd(56)} ║
 ║                                                          ║
 ║  💾 Storage:      ${config.storageDir.padEnd(42)}║
 ║                                                          ║

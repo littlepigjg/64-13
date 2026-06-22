@@ -12,12 +12,14 @@
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "http-proxy-middleware": "^3.0.3",
+    "multer": "^2.2.0",
     "semver": "^7.6.3",
     "tar": "^7.4.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/multer": "^2.1.0",
     "@types/node": "^22.7.4",
     "@types/semver": "^7.5.8",
     "@types/tar": "^6.1.13",

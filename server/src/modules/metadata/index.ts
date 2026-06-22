@@ -2,7 +2,20 @@ import fs from 'fs';
 import path from 'path';
 import { ensureDir, formatDate, getDirSize } from '../../utils';
 import { config } from '../../config';
-import type { PackageInfo, PackageVersion, CacheStats, StorageTrend, CachePolicy, RegistryType, PackageSource } from '../../types';
+import type {
+  PackageInfo,
+  PackageVersion,
+  CacheStats,
+  StorageTrend,
+  CachePolicy,
+  RegistryType,
+  PackageSource,
+  User,
+  UserRole,
+  AuditLog,
+  AuditAction,
+  AuditLogQuery,
+} from '../../types';
 
 interface DBPackage {
   id: number;
@@ -18,6 +31,8 @@ interface DBPackage {
   updatedAt: number;
   totalSize: number;
   downloadCount: number;
+  ownerId?: number;
+  ownerName?: string;
 }
 
 interface DBVersion {
@@ -29,13 +44,43 @@ interface DBVersion {
   sha1?: string;
   publishedAt: number;
   downloadCount: number;
+  publisherId?: number;
+  publisherName?: string;
+}
+
+interface DBUser {
+  id: number;
+  username: string;
+  role: UserRole;
+  token: string;
+  createdAt: number;
+  lastActiveAt: number;
+}
+
+interface DBAuditLog {
+  id: number;
+  userId: number;
+  username: string;
+  userRole: UserRole;
+  action: AuditAction;
+  target?: string;
+  details?: Record<string, unknown>;
+  ip?: string;
+  userAgent?: string;
+  timestamp: number;
+  success: boolean;
+  errorMessage?: string;
 }
 
 interface DB {
   nextPackageId: number;
   nextVersionId: number;
+  nextUserId: number;
+  nextAuditLogId: number;
   packages: DBPackage[];
   versions: DBVersion[];
+  users: DBUser[];
+  auditLogs: DBAuditLog[];
   storageTrend: StorageTrend[];
   cachePolicy: CachePolicy;
 }
@@ -64,26 +109,70 @@ export class MetadataIndex {
       try {
         const raw = fs.readFileSync(this.dbPath, 'utf-8');
         const parsed = JSON.parse(raw);
-        return {
+        const db: DB = {
           nextPackageId: parsed.nextPackageId || 1,
           nextVersionId: parsed.nextVersionId || 1,
+          nextUserId: parsed.nextUserId || 1,
+          nextAuditLogId: parsed.nextAuditLogId || 1,
           packages: parsed.packages || [],
           versions: parsed.versions || [],
+          users: parsed.users || [],
+          auditLogs: parsed.auditLogs || [],
           storageTrend: parsed.storageTrend || [],
           cachePolicy: parsed.cachePolicy || { ...DEFAULT_POLICY, ...config.cache },
         };
+
+        if (db.users.length === 0 && config.auth.requireAuth) {
+          const now = Date.now();
+          db.users.push({
+            id: db.nextUserId++,
+            username: config.auth.defaultAdminUsername,
+            role: 'admin',
+            token: config.auth.defaultAdminToken,
+            createdAt: now,
+            lastActiveAt: now,
+          });
+        }
+
+        this.cleanupOldAuditLogs(db);
+        return db;
       } catch {
         // fall through to default
       }
     }
-    return {
+
+    const now = Date.now();
+    const defaultDB: DB = {
       nextPackageId: 1,
       nextVersionId: 1,
+      nextUserId: 2,
+      nextAuditLogId: 1,
       packages: [],
       versions: [],
+      users: [],
+      auditLogs: [],
       storageTrend: [],
       cachePolicy: { ...DEFAULT_POLICY, ...config.cache },
     };
+
+    if (config.auth.requireAuth) {
+      defaultDB.users.push({
+        id: 1,
+        username: config.auth.defaultAdminUsername,
+        role: 'admin',
+        token: config.auth.defaultAdminToken,
+        createdAt: now,
+        lastActiveAt: now,
+      });
+    }
+
+    return defaultDB;
+  }
+
+  private cleanupOldAuditLogs(db: DB): void {
+    if (config.audit.retentionDays <= 0) return;
+    const cutoff = Date.now() - config.audit.retentionDays * 24 * 60 * 60 * 1000;
+    db.auditLogs = db.auditLogs.filter(log => log.timestamp >= cutoff);
   }
 
   private scheduleSave(): void {
@@ -105,12 +194,21 @@ export class MetadataIndex {
     name: string,
     registry: RegistryType,
     source: PackageSource,
-    scope?: string
+    scope?: string,
+    ownerId?: number,
+    ownerName?: string
   ): number {
     const existing = this.db.packages.find(
       (p) => p.name === name && p.registry === registry
     );
-    if (existing) return existing.id;
+    if (existing) {
+      if (ownerId !== undefined && existing.ownerId === undefined) {
+        existing.ownerId = ownerId;
+        existing.ownerName = ownerName;
+        this.scheduleSave();
+      }
+      return existing.id;
+    }
 
     const now = Date.now();
     const id = this.db.nextPackageId++;
@@ -125,9 +223,138 @@ export class MetadataIndex {
       updatedAt: now,
       totalSize: 0,
       downloadCount: 0,
+      ownerId,
+      ownerName,
     });
     this.scheduleSave();
     return id;
+  }
+
+  createUser(username: string, role: UserRole, token: string): User {
+    const now = Date.now();
+    const user: DBUser = {
+      id: this.db.nextUserId++,
+      username,
+      role,
+      token,
+      createdAt: now,
+      lastActiveAt: now,
+    };
+    this.db.users.push(user);
+    this.scheduleSave();
+    return this.toUser(user);
+  }
+
+  getUserById(id: number): User | null {
+    const user = this.db.users.find(u => u.id === id);
+    return user ? this.toUser(user) : null;
+  }
+
+  getUserByUsername(username: string): User | null {
+    const user = this.db.users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    return user ? this.toUser(user) : null;
+  }
+
+  getUserByToken(token: string): User | null {
+    const user = this.db.users.find(u => u.token === token);
+    return user ? this.toUser(user) : null;
+  }
+
+  listUsers(): User[] {
+    return this.db.users.map(u => this.toUser(u));
+  }
+
+  updateUserLastActive(id: number, timestamp: number): void {
+    const user = this.db.users.find(u => u.id === id);
+    if (user) {
+      user.lastActiveAt = timestamp;
+      this.scheduleSave();
+    }
+  }
+
+  updateUserToken(id: number, token: string): void {
+    const user = this.db.users.find(u => u.id === id);
+    if (user) {
+      user.token = token;
+      this.scheduleSave();
+    }
+  }
+
+  deleteUser(id: number): boolean {
+    const idx = this.db.users.findIndex(u => u.id === id);
+    if (idx < 0) return false;
+    this.db.users.splice(idx, 1);
+    this.scheduleSave();
+    return true;
+  }
+
+  addAuditLog(log: Omit<AuditLog, 'id'>): void {
+    const dbLog: DBAuditLog = {
+      ...log,
+      id: this.db.nextAuditLogId++,
+    };
+    this.db.auditLogs.push(dbLog);
+    if (this.db.auditLogs.length > 10000) {
+      this.cleanupOldAuditLogs(this.db);
+    }
+    this.scheduleSave();
+  }
+
+  queryAuditLogs(query: AuditLogQuery): { logs: AuditLog[]; total: number } {
+    let logs = [...this.db.auditLogs];
+
+    if (query.userId !== undefined) {
+      logs = logs.filter(l => l.userId === query.userId);
+    }
+    if (query.action) {
+      logs = logs.filter(l => l.action === query.action);
+    }
+    if (query.startDate !== undefined) {
+      logs = logs.filter(l => l.timestamp >= query.startDate!);
+    }
+    if (query.endDate !== undefined) {
+      logs = logs.filter(l => l.timestamp <= query.endDate!);
+    }
+    if (query.success !== undefined) {
+      logs = logs.filter(l => l.success === query.success);
+    }
+
+    logs.sort((a, b) => b.timestamp - a.timestamp);
+
+    const total = logs.length;
+    const limit = query.limit || 50;
+    const offset = query.offset || 0;
+    logs = logs.slice(offset, offset + limit);
+
+    return { logs: logs.map(l => this.toAuditLog(l)), total };
+  }
+
+  private toUser(dbUser: DBUser): User {
+    return {
+      id: dbUser.id,
+      username: dbUser.username,
+      role: dbUser.role,
+      token: dbUser.token,
+      createdAt: dbUser.createdAt,
+      lastActiveAt: dbUser.lastActiveAt,
+    };
+  }
+
+  private toAuditLog(dbLog: DBAuditLog): AuditLog {
+    return {
+      id: dbLog.id,
+      userId: dbLog.userId,
+      username: dbLog.username,
+      userRole: dbLog.userRole,
+      action: dbLog.action,
+      target: dbLog.target,
+      details: dbLog.details,
+      ip: dbLog.ip,
+      userAgent: dbLog.userAgent,
+      timestamp: dbLog.timestamp,
+      success: dbLog.success,
+      errorMessage: dbLog.errorMessage,
+    };
   }
 
   upsertPackageInfo(info: Partial<PackageInfo> & { name: string; registry: RegistryType }): void {
@@ -154,7 +381,9 @@ export class MetadataIndex {
     version: string,
     size: number,
     filePath: string,
-    sha1?: string
+    sha1?: string,
+    publisherId?: number,
+    publisherName?: string
   ): void {
     const now = Date.now();
     const existing = this.db.versions.find(
@@ -165,6 +394,10 @@ export class MetadataIndex {
       existing.filePath = filePath;
       if (sha1) existing.sha1 = sha1;
       existing.publishedAt = now;
+      if (publisherId !== undefined) {
+        existing.publisherId = publisherId;
+        existing.publisherName = publisherName;
+      }
     } else {
       const id = this.db.nextVersionId++;
       this.db.versions.push({
@@ -176,6 +409,8 @@ export class MetadataIndex {
         sha1,
         publishedAt: now,
         downloadCount: 0,
+        publisherId,
+        publisherName,
       });
     }
     this.recalcPackageSize(packageId);
@@ -222,6 +457,8 @@ export class MetadataIndex {
         sha1: v.sha1,
         publishedAt: v.publishedAt,
         downloadCount: v.downloadCount,
+        publisherId: v.publisherId,
+        publisherName: v.publisherName,
       }));
 
     return {
@@ -237,6 +474,8 @@ export class MetadataIndex {
       updatedAt: pkg.updatedAt,
       totalSize: pkg.totalSize,
       downloadCount: pkg.downloadCount,
+      ownerId: pkg.ownerId,
+      ownerName: pkg.ownerName,
       versions,
     };
   }
@@ -249,11 +488,15 @@ export class MetadataIndex {
     offset?: number;
     sortBy?: 'name' | 'updatedAt' | 'size' | 'downloads';
     sortOrder?: 'asc' | 'desc';
+    ownerId?: number;
   } = {}): { packages: PackageInfo[]; total: number } {
     let list = [...this.db.packages];
 
     if (options.registry) list = list.filter((p) => p.registry === options.registry);
     if (options.source) list = list.filter((p) => p.source === options.source);
+    if (options.ownerId !== undefined) {
+      list = list.filter((p) => p.ownerId === options.ownerId || p.source !== 'private');
+    }
     if (options.search) {
       const s = options.search.toLowerCase();
       list = list.filter((p) => p.name.toLowerCase().includes(s));
@@ -302,6 +545,8 @@ export class MetadataIndex {
       updatedAt: pkg.updatedAt,
       totalSize: pkg.totalSize,
       downloadCount: pkg.downloadCount,
+      ownerId: pkg.ownerId,
+      ownerName: pkg.ownerName,
       versions: (versionsByPkg[pkg.id] || []).map<PackageVersion>((v) => ({
         version: v.version,
         size: v.size,
@@ -309,6 +554,8 @@ export class MetadataIndex {
         sha1: v.sha1,
         publishedAt: v.publishedAt,
         downloadCount: v.downloadCount,
+        publisherId: v.publisherId,
+        publisherName: v.publisherName,
       })),
     }));
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Settings as SettingsIcon,
   HardDrive,
@@ -11,10 +12,13 @@ import {
   Database,
 } from 'lucide-react';
 import { api } from '../api';
+import { useAuth } from '../AuthContext';
 import type { CachePolicy, HealthInfo } from '../types';
 import { formatSize } from '../utils';
 
 export default function Settings() {
+  const navigate = useNavigate();
+  const { authEnabled, isAdmin, loading: authLoading } = useAuth();
   const [policy, setPolicy] = useState<CachePolicy | null>(null);
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,8 +39,14 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (!authLoading && authEnabled && !isAdmin()) {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+    if (!authLoading) {
+      loadData();
+    }
+  }, [authLoading, authEnabled, isAdmin, navigate]);
 
   const handleSave = async () => {
     if (!policy) return;
@@ -63,7 +73,7 @@ export default function Settings() {
     }
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="animate-spin text-indigo-600" size={32} />
