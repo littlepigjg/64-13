@@ -11,6 +11,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   isAdmin: () => boolean;
+  isPackageOwner: (pkg: { ownerId?: number }) => boolean;
   canDeletePackage: (pkg: { ownerId?: number; source: string }) => boolean;
 }
 
@@ -88,6 +89,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return user?.role === 'admin';
   };
 
+  const isPackageOwner = (pkg: { ownerId?: number }) => {
+    if (!authEnabled) return true;
+    if (!user) return false;
+    return pkg.ownerId === user.id;
+  };
+
   const canDeletePackage = (pkg: { ownerId?: number; source: string }) => {
     if (!authEnabled) return true;
     if (!user) return false;
@@ -107,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         checkAuth,
         isAdmin,
+        isPackageOwner,
         canDeletePackage,
       }}
     >

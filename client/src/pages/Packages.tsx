@@ -1,31 +1,33 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Search,
   Filter,
   ChevronLeft,
   ChevronRight,
   Trash2,
-  Lock,
-  Download,
-  Box,
-  Archive,
-  Database,
+  TrendingUp,
   Loader2,
   ArrowUpDown,
-  TrendingUp,
+  Box,
 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../AuthContext';
 import type { PackageInfo, RegistryType, PackageSource } from '../types';
 import { formatSize, formatRelativeTime } from '../utils';
+import {
+  PackageIcon,
+  RegistryBadge,
+  SourceBadge,
+  OwnerBadge,
+} from '../components/PackageBadges';
 
 type SortBy = 'name' | 'updatedAt' | 'size' | 'downloads';
 
 export default function Packages() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { canDeletePackage } = useAuth();
+  const { user, authEnabled, isAdmin, canDeletePackage } = useAuth();
   const [packages, setPackages] = useState<PackageInfo[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -92,15 +94,29 @@ export default function Packages() {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
+  const getHeaderSubtitle = () => {
+    if (!authEnabled || isAdmin()) {
+      return `管理本地缓存的 NPM 和 PyPI 包，共 ${total} 个`;
+    }
+    const myPrivateCount = packages.filter(
+      (p) => p.source === 'private' && p.ownerId === user?.id
+    ).length;
+    return `共 ${total} 个包 · 我上传的私有包 ${myPrivateCount} 个 · 其余为团队共享的代理缓存`;
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">包列表</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            管理本地缓存的 NPM 和 PyPI 包，共 {total} 个
-          </p>
+          <p className="text-sm text-slate-500 mt-1">{getHeaderSubtitle()}</p>
         </div>
+        {authEnabled && !isAdmin() && (
+          <div className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-100">
+            <Box size={12} />
+            <span>私有包仅你和管理员可操作；代理缓存为团队共享只读</span>
+          </div>
+        )}
       </div>
 
       <div className="card p-4 space-y-4">
@@ -140,7 +156,7 @@ export default function Packages() {
             }}
           >
             <option value="">全部来源</option>
-            <option value="cache">💾 代理缓存</option>
+            <option value="cache">💾 代理缓存（团队共享）</option>
             <option value="private">🔒 私有包</option>
           </select>
 
@@ -156,7 +172,7 @@ export default function Packages() {
           <table>
             <thead>
               <tr>
-                <th className="w-10"></th>
+                <th className="w-12"></th>
                 <th className="cursor-pointer select-none" onClick={() => handleSort('name')}>
                   <span className="flex items-center gap-1">
                     包名 <ArrowUpDown size={12} />
@@ -164,6 +180,7 @@ export default function Packages() {
                 </th>
                 <th>仓库</th>
                 <th>来源</th>
+                <th>所有者</th>
                 <th className="cursor-pointer select-none" onClick={() => handleSort('size')}>
                   <span className="flex items-center gap-1">
                     占用空间 <ArrowUpDown size={12} />
@@ -186,7 +203,7 @@ export default function Packages() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center">
+                  <td colSpan={10} className="py-12 text-center">
                     <Loader2 className="animate-spin text-indigo-600 mx-auto" size={24} />
                   </td>
                 </tr>
@@ -194,7 +211,7 @@ export default function Packages() {
 
               {!loading && packages.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="py-16 text-center">
+                  <td colSpan={10} className="py-16 text-center">
                     <Box size={48} className="mx-auto text-slate-300 mb-3" />
                     <p className="text-slate-500">暂无符合条件的包</p>
                     <p className="text-sm text-slate-400 mt-1">
@@ -205,80 +222,89 @@ export default function Packages() {
               )}
 
               {!loading &&
-                packages.map((pkg) => (
-                  <tr
-                    key={`${pkg.registry}-${pkg.name}`}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/packages/${pkg.registry}/${encodeURIComponent(pkg.name)}`)}
-                  >
-                    <td>
-                      <div
-                        className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                          pkg.registry === 'npm' ? 'bg-orange-50 text-orange-600' : 'bg-sky-50 text-sky-600'
-                        }`}
-                      >
-                        {pkg.registry === 'npm' ? <Archive size={16} /> : <Database size={16} />}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="font-medium text-slate-800">{pkg.name}</div>
-                      {pkg.description && (
-                        <div className="text-xs text-slate-400 mt-0.5 truncate max-w-md">
-                          {pkg.description}
+                packages.map((pkg) => {
+                  const canDelete = canDeletePackage(pkg);
+                  return (
+                    <tr
+                      key={`${pkg.registry}-${pkg.name}`}
+                      className={`cursor-pointer ${
+                        pkg.source === 'private' && !canDelete
+                          ? 'bg-slate-50/60'
+                          : ''
+                      }`}
+                      onClick={() =>
+                        navigate(`/packages/${pkg.registry}/${encodeURIComponent(pkg.name)}`)
+                      }
+                    >
+                      <td>
+                        <PackageIcon registry={pkg.registry} size="sm" />
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <div className="font-medium text-slate-800">{pkg.name}</div>
+                          {pkg.source === 'private' && canDelete && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">
+                              可管理
+                            </span>
+                          )}
                         </div>
-                      )}
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          pkg.registry === 'npm'
-                            ? 'bg-orange-100 text-orange-700'
-                            : 'bg-sky-100 text-sky-700'
-                        }`}
-                      >
-                        {pkg.registry.toUpperCase()}
-                      </span>
-                    </td>
-                    <td>
-                      {pkg.source === 'private' ? (
-                        <span className="badge bg-rose-100 text-rose-700">
-                          <Lock size={10} className="mr-1" /> 私有
+                        {pkg.description && (
+                          <div className="text-xs text-slate-400 mt-0.5 truncate max-w-md">
+                            {pkg.description}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <RegistryBadge registry={pkg.registry} />
+                      </td>
+                      <td>
+                        <SourceBadge source={pkg.source} />
+                      </td>
+                      <td>
+                        <OwnerBadge
+                          ownerId={pkg.ownerId}
+                          ownerName={pkg.ownerName}
+                          source={pkg.source}
+                        />
+                      </td>
+                      <td className="font-mono text-sm text-slate-700">
+                        {formatSize(pkg.totalSize)}
+                        <div className="text-xs text-slate-400">
+                          {pkg.versions.length} 个版本
+                        </div>
+                      </td>
+                      <td className="font-mono text-sm text-slate-700">
+                        {pkg.latestVersion || '-'}
+                      </td>
+                      <td>
+                        <span className="inline-flex items-center gap-1 text-sm text-slate-600">
+                          <TrendingUp size={12} />
+                          {pkg.downloadCount}
                         </span>
-                      ) : (
-                        <span className="badge bg-emerald-100 text-emerald-700">
-                          💾 缓存
-                        </span>
-                      )}
-                    </td>
-                    <td className="font-mono text-sm text-slate-700">
-                      {formatSize(pkg.totalSize)}
-                      <div className="text-xs text-slate-400">
-                        {pkg.versions.length} 个版本
-                      </div>
-                    </td>
-                    <td className="font-mono text-sm text-slate-700">
-                      {pkg.latestVersion || '-'}
-                    </td>
-                    <td>
-                      <span className="inline-flex items-center gap-1 text-sm text-slate-600">
-                        <TrendingUp size={12} />
-                        {pkg.downloadCount}
-                      </span>
-                    </td>
-                    <td className="text-sm text-slate-500">{formatRelativeTime(pkg.updatedAt)}</td>
-                    <td className="text-right">
-                      {canDeletePackage(pkg) && (
-                        <button
-                          className="btn btn-ghost p-2 text-slate-400 hover:text-red-600 hover:bg-red-50"
-                          onClick={(e) => handleDelete(pkg, e)}
-                          title="删除"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="text-sm text-slate-500">{formatRelativeTime(pkg.updatedAt)}</td>
+                      <td className="text-right">
+                        {canDelete && (
+                          <button
+                            className="btn btn-ghost p-2 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                            onClick={(e) => handleDelete(pkg, e)}
+                            title="删除"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                        {!canDelete && pkg.source === 'private' && (
+                          <span
+                            className="inline-block text-[10px] text-slate-400"
+                            title="非你上传的私有包，无权操作"
+                          >
+                            只读
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>

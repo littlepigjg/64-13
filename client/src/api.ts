@@ -23,6 +23,15 @@ const API_BASE = '/api';
 
 let authToken: string | null = null;
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = 'ApiError';
+  }
+}
+
 export function setAuthToken(token: string | null): void {
   authToken = token;
   if (token) {
@@ -62,7 +71,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       window.dispatchEvent(new CustomEvent('auth:logout'));
     }
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    throw new ApiError(err.error || `HTTP ${res.status}`, res.status);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
